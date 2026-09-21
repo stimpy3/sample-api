@@ -1,0 +1,18 @@
+# Ephemeral test stack. Started so the conformance check has a live API to
+# fire requests at, then torn down in the pipeline's `post` block.
+#
+# Distinct from docker-compose.staging.yml in every way that could collide:
+# different port, different project name, different container name. The two are
+# up at the same time during a build, and a demo that accidentally tested the
+# staging deployment instead of the candidate build would be worse than useless.
+
+name: sample-api-test
+
+services:
+  api:
+    build: .
+    container_name: sample-api-test
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1

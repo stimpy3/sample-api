@@ -48,7 +48,15 @@ def get_user(user_id: int) -> User:
     response_model=User,
     status_code=status.HTTP_201_CREATED,
     summary="Create a user",
-    responses={201: {"description": "The newly created user."}},
+    responses={
+        201: {"description": "The newly created user."},
+        # FastAPI answers 400 when the body is not parseable JSON at all, as
+        # distinct from the 422 it returns for JSON that parses but fails
+        # validation. Undeclared, this is a contract violation: the conformance
+        # check found it by posting malformed bytes, which is the kind of input
+        # no hand-written test suite would have thought to try.
+        400: {"model": Error, "description": "The request body could not be parsed."},
+    },
 )
 def create_user(payload: UserCreate) -> User:
     return store.create_user(name=payload.name, email=payload.email)
