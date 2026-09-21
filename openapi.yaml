@@ -1,0 +1,196 @@
+components:
+  schemas:
+    Error:
+      description: A problem report returned with non-2xx responses.
+      properties:
+        detail:
+          description: Human-readable description of the problem.
+          title: Detail
+          type: string
+      required:
+      - detail
+      title: Error
+      type: object
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          title: Detail
+          type: array
+      title: HTTPValidationError
+      type: object
+    User:
+      description: A user as returned by the API.
+      properties:
+        created_at:
+          description: When the user record was created.
+          format: date-time
+          title: Created At
+          type: string
+        email:
+          description: Contact email address.
+          examples:
+          - sohan@example.com
+          title: Email
+          type: string
+        id:
+          description: Unique identifier.
+          examples:
+          - 1
+          title: Id
+          type: integer
+        name:
+          description: Display name.
+          examples:
+          - Sohan
+          title: Name
+          type: string
+      required:
+      - id
+      - name
+      - email
+      - created_at
+      title: User
+      type: object
+    UserCreate:
+      description: The payload accepted when creating a user.
+      properties:
+        email:
+          description: Contact email address.
+          examples:
+          - sohan@example.com
+          title: Email
+          type: string
+        name:
+          description: Display name.
+          examples:
+          - Sohan
+          title: Name
+          type: string
+      required:
+      - name
+      - email
+      title: UserCreate
+      type: object
+    ValidationError:
+      properties:
+        ctx:
+          title: Context
+          type: object
+        input:
+          title: Input
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          title: Location
+          type: array
+        msg:
+          title: Message
+          type: string
+        type:
+          title: Error Type
+          type: string
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+      type: object
+info:
+  description: A small user service used to demonstrate API contract testing.
+  title: Sample API
+  version: 1.0.0
+openapi: 3.1.0
+paths:
+  /health:
+    get:
+      description: Used by the deploy stage to wait for staging to come up.
+      operationId: health_health_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                title: Response Health Health Get
+                type: object
+          description: The service is up.
+      summary: Liveness probe
+      tags:
+      - ops
+  /users:
+    get:
+      operationId: list_users_users_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/User'
+                title: Response List Users Users Get
+                type: array
+          description: Every user currently known to the service.
+      summary: List all users
+      tags:
+      - users
+    post:
+      operationId: create_user_users_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: The newly created user.
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Create a user
+      tags:
+      - users
+  /users/{user_id}:
+    get:
+      operationId: get_user_users__user_id__get
+      parameters:
+      - in: path
+        name: user_id
+        required: true
+        schema:
+          title: User Id
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: The requested user.
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: No user exists with that id.
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Fetch a single user
+      tags:
+      - users
