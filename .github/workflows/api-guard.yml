@@ -1,0 +1,61 @@
+# The same gate Jenkins runs, on GitHub's runner instead.
+#
+# One tool, one config, two CI systems. That is the reusability claim made
+# checkable: if these two ever disagree about the same commit, the tool is not
+# actually portable and we would want to know.
+
+name: api-guard
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write   # for the report comment
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # api-guard compares against origin/main. A shallow clone does not
+          # have it, and the failure looks like a missing spec rather than a
+          # missing ref.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install the app's dependencies
+        run: pip install -r requirements.txt
+
+      # Generated here, in the project's own environment. The api-guard image
+      # carries oasdiff and Schemathesis, not FastAPI, so it cannot run this
+      # itself — and should not have to, or it would need every framework its
+      # users happen to use.
+      - name: Generate the spec from the code
+        run: python scripts/export_openapi.py --output generated.yaml
+
+      - name: Start the API
+        run: |
+          docker compose up -d --build
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:8000/health >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          echo "::error::API did not come up"; exit 1
+
+      - name: Contract gate
+        uses: stimpy3/api-guard@main
+        with:
+          config: api-guard.yaml
+          generated-spec: generated.yaml
+          url: http://localhost:8000
+
+      - name: Stop the API
+        if: always()
+        run: docker compose down -v

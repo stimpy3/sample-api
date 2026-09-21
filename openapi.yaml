@@ -168,6 +168,38 @@ paths:
       summary: Create a user
       tags:
       - users
+  /users/search:
+    get:
+      deprecated: true
+      operationId: search_users_users_search_get
+      parameters:
+      - in: query
+        name: q
+        required: false
+        schema:
+          default: ''
+          title: Q
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/User'
+                title: Response Search Users Users Search Get
+                type: array
+          description: Users whose name contains the query.
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Search users by name (deprecated)
+      tags:
+      - users
+      x-sunset: '2026-03-01'
   /users/{user_id}:
     get:
       operationId: get_user_users__user_id__get

@@ -25,6 +25,26 @@ def list_users() -> list[User]:
 
 
 @router.get(
+    "/search",
+    response_model=list[User],
+    summary="Search users by name (deprecated)",
+    deprecated=True,
+    # Announced for removal. oasdiff honours x-sunset for endpoints: deleting
+    # this before the date is reported as api-path-removed-before-sunset, and
+    # after it the deletion is clean. That is the zero-exception retirement
+    # path, and it is demo scenario 6.
+    #
+    # Note this works for ENDPOINTS only. A response field gets no such
+    # treatment - see the email field, where the cost is paid at the
+    # required-to-optional demotion instead.
+    openapi_extra={"x-sunset": "2026-03-01"},
+    responses={200: {"description": "Users whose name contains the query."}},
+)
+def search_users(q: str = "") -> list[User]:
+    return [u for u in store.list_users() if q.lower() in u.name.lower()]
+
+
+@router.get(
     "/{user_id}",
     response_model=User,
     summary="Fetch a single user",
