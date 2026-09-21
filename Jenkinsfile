@@ -18,6 +18,17 @@ pipeline {
     GUARD_IMAGE    = "${DOCKERHUB_USER}/api-guard:1"
     TEST_STACK     = 'docker-compose.yml'
     STAGING_STACK  = 'docker-compose.staging.yml'
+    // Jenkins talks to the host's Docker daemon through the mounted socket, so
+    // every container it starts is a SIBLING, not a child. Volume paths in
+    // `docker run` are therefore resolved by the host — and the workspace lives
+    // inside a named volume, so `-v $(pwd):/work` mounts a path the host does
+    // not have and the container sees an empty directory. The symptom is a
+    // baffling "cannot read config api-guard.yaml: No such file or directory"
+    // for a file that is plainly there in the workspace.
+    //
+    // --volumes-from gives the sibling Jenkins' own volumes at the same paths,
+    // so $(pwd) means the same thing in both.
+    JENKINS_CONTAINER = 'jenkins-local'
     // Short SHA is the artifact identity: every deploy is traceable to one
     // commit, and a rollback names an exact build rather than "the last one".
     TAG            = "${env.GIT_COMMIT ? env.GIT_COMMIT.take(7) : env.BUILD_NUMBER}"
@@ -53,8 +64,8 @@ pipeline {
       // environment; the tool only compares the result.
       steps {
         sh """
-          docker run --rm -v \$(pwd):/out -w /app ${APP_IMAGE}:${TAG} \
-            python scripts/export_openapi.py --output /out/generated.yaml
+          docker run --rm --volumes-from ${JENKINS_CONTAINER} -w /app ${APP_IMAGE}:${TAG} \
+            python scripts/export_openapi.py --output \$(pwd)/generated.yaml
         """
       }
     }
@@ -78,7 +89,7 @@ pipeline {
           sh """
             docker pull ${GUARD_IMAGE}
             docker run --rm --network ${network} \
-              -v \$(pwd):/work -w /work ${GUARD_IMAGE} \
+              --volumes-from ${JENKINS_CONTAINER} -w \$(pwd) ${GUARD_IMAGE} \
               check --config api-guard.yaml \
                     --generated-spec generated.yaml \
                     --url http://api:8000
@@ -168,7 +179,7 @@ pipeline {
           try {
             sh """
               docker run --rm --add-host=host.docker.internal:host-gateway \
-                -v \$(pwd):/work -w /work ${GUARD_IMAGE} \
+                --volumes-from ${JENKINS_CONTAINER} -w \$(pwd) ${GUARD_IMAGE} \
                 check --config api-guard.yaml \
                       --only conformance \
                       --url http://host.docker.internal:8080
