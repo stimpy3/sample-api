@@ -90,17 +90,26 @@ pipeline {
     // Everything below here only runs because the gate passed.
 
     stage('Publish image') {
+      // Skipped when no `dockerhub` credential is configured. A fork, or a
+      // fresh clone on somebody else's machine, should still be able to run
+      // the gate and see it work without first being made to set up a
+      // registry account. The contract check is the point; publishing is what
+      // happens once it passes.
       steps {
-        withCredentials([usernamePassword(
-          credentialsId: 'dockerhub',
-          usernameVariable: 'DH_USER',
-          passwordVariable: 'DH_PASS'
-        )]) {
-          sh '''
-            echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
-          '''
-          sh "docker push ${APP_IMAGE}:${TAG}"
-          script {
+        script {
+          if (!_hasCredential('dockerhub')) {
+            echo 'No `dockerhub` credential configured - skipping publish and deploy.'
+            echo 'Add a Username/password credential with ID `dockerhub` to enable them.'
+            env.SKIP_DEPLOY = 'true'
+            return
+          }
+          withCredentials([usernamePassword(
+            credentialsId: 'dockerhub',
+            usernameVariable: 'DH_USER',
+            passwordVariable: 'DH_PASS'
+          )]) {
+            sh 'echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin'
+            sh "docker push ${APP_IMAGE}:${TAG}"
             if (env.BRANCH_NAME == 'main' || env.GIT_BRANCH?.endsWith('main')) {
               sh "docker tag ${APP_IMAGE}:${TAG} ${APP_IMAGE}:latest"
               sh "docker push ${APP_IMAGE}:latest"
@@ -111,6 +120,7 @@ pipeline {
     }
 
     stage('Deploy to staging') {
+      when { expression { env.SKIP_DEPLOY != 'true' } }
       steps {
         script {
           // Record what is currently live BEFORE replacing it. Working this
@@ -131,6 +141,7 @@ pipeline {
     }
 
     stage('Smoke test staging') {
+      when { expression { env.SKIP_DEPLOY != 'true' } }
       steps {
         script {
           // Poll rather than sleep: a fixed sleep is either too short and
@@ -197,5 +208,17 @@ pipeline {
     failure {
       echo 'Contract gate or smoke test failed. Nothing new was deployed.'
     }
+  }
+}
+
+/** True when a credential with this ID exists, without throwing if it does not. */
+boolean _hasCredential(String id) {
+  try {
+    withCredentials([usernamePassword(
+      credentialsId: id, usernameVariable: 'U', passwordVariable: 'P'
+    )]) { }
+    return true
+  } catch (ignored) {
+    return false
   }
 }
