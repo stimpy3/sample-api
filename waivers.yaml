@@ -1,0 +1,14 @@
+# Breaking changes that were detected, understood, and allowed through anyway.
+#
+# Empty is the healthy state. Every entry here is a promise somebody made to
+# consumers and then decided to break, so each one needs a reason worth reading,
+# a name against it, and a date after which it stops working.
+#
+# Get the fingerprint from the failure output of a blocked build.
+#
+# - fingerprint: "3c11fcf1ab0e"
+#   id: response-property-became-optional
+#   path: /users
+#   reason: "PROD-142 - email superseded by phone, both consumers migrated."
+#   approved_by: sohan
+#   expires: 2026-12-31

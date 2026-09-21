@@ -1,0 +1,29 @@
+# How api-guard checks this project.
+#
+# Note what is NOT here: anything about FastAPI. api-guard does not know or care
+# which framework produced the spec — the project supplies a command that prints
+# one, and that indirection is what lets the same tool serve a Spring Boot or
+# Express repo unchanged.
+
+spec:
+  path: openapi.yaml
+  base: "git:origin/main"
+  generate_cmd: "python scripts/export_openapi.py --stdout"
+
+runtime:
+  url: http://localhost:8000
+  checks:
+    - not_a_server_error
+    - response_schema_conformance
+    - status_code_conformance
+  max_examples: 50
+  wait_for_schema: 30
+
+policy:
+  fail_on: ERR
+  deprecation_days_stable: 180
+  waivers: waivers.yaml
+
+report:
+  dir: api-guard-report
+  formats: [markdown, json, junit]
