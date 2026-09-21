@@ -6,3 +6,4 @@ venv/
 api-guard-report/
 .env
 generated.yaml
+.schemathesis/
