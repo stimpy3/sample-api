@@ -1,0 +1,27 @@
+# The deployment target. Deliberately NOT torn down by the pipeline — the whole
+# point of the deploy stage is that something is still running afterwards.
+#
+# Two things differ from docker-compose.yml on purpose:
+#
+#   * It PULLS a tagged image from Docker Hub rather than building locally.
+#     Building here would quietly skip the registry, and then "we publish an
+#     artifact and deploy that artifact" would be a claim rather than a fact.
+#
+#   * Different port, project name and container name, so it cannot collide
+#     with the ephemeral test stack. Both are up at once during a build, and a
+#     demo that accidentally tested staging instead of the candidate build
+#     would be worse than no demo at all.
+
+name: sample-api-staging
+
+services:
+  api:
+    # Set by the pipeline. The default is what a human gets running this by
+    # hand, which should be the last known-good release, not a mystery.
+    image: ${SAMPLE_API_IMAGE:-sohanbhadalkar/sample-api:latest}
+    container_name: sample-api-staging
+    restart: unless-stopped
+    ports:
+      - "8080:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
