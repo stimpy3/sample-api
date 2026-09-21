@@ -21,7 +21,25 @@ PY="${PY:-.venv/Scripts/python.exe}"
 
 regen() { "$PY" scripts/export_openapi.py --output openapi.yaml >/dev/null 2>&1; }
 
+require_clean_tree() {
+  # These scenarios end in `git add -A`, which would sweep up any unrelated
+  # edits sitting in the working tree and commit them onto a throwaway demo
+  # branch. Then `reset` deletes that branch and the work is gone. Refuse
+  # rather than let that happen — it has already happened once.
+  if [ -n "$(git status --porcelain)" ]; then
+    echo
+    echo "  Working tree is not clean:"
+    git status --short | sed 's/^/    /'
+    echo
+    echo "  These scenarios commit everything with 'git add -A'. Commit or stash"
+    echo "  first, or your changes end up on a demo branch that gets deleted."
+    echo
+    exit 1
+  fi
+}
+
 start() {
+  require_clean_tree
   git checkout -q main
   git branch -D "demo/$1" 2>/dev/null || true
   git checkout -q -b "demo/$1"
