@@ -26,13 +26,6 @@ pipeline {
   environment {
     DOCKERHUB_USER = 'sohanbhadalkar'
     APP_IMAGE      = "${DOCKERHUB_USER}/sample-api"
-    // The -ai variant: `review` and `approve` need LangGraph. The gate's
-    // verdict is the same as the plain image's; only the approval flow is added.
-    // API_GUARD_IMAGE / API_GUARD_PULL let a local Jenkins use an image it built
-    // itself instead of the published one.
-    GUARD_IMAGE    = "${env.API_GUARD_IMAGE ?: 'sohanbhadalkar/api-guard:1-ai'}"
-    GUARD_PULL     = "${env.API_GUARD_PULL ?: 'true'}"
-    APPROVAL_HOURS = "${env.API_GUARD_APPROVAL_HOURS ?: '24'}"
     TEST_STACK     = 'docker-compose.yml'
     STAGING_STACK  = 'docker-compose.staging.yml'
     // Jenkins talks to the host's Docker daemon through the mounted socket, so
@@ -46,9 +39,10 @@ pipeline {
     // --volumes-from gives the sibling Jenkins' own volumes at the same paths,
     // so $(pwd) means the same thing in both.
     JENKINS_CONTAINER = 'jenkins-local'
-    // Short SHA is the artifact identity: every deploy is traceable to one
-    // commit, and a rollback names an exact build rather than "the last one".
-    TAG            = "${env.GIT_COMMIT ? env.GIT_COMMIT.take(7) : env.BUILD_NUMBER}"
+    // TAG, GUARD_IMAGE, GUARD_PULL and APPROVAL_HOURS are set in the Checkout
+    // stage, not here. With `agent none` this block is evaluated before any
+    // node exists: there is no commit to read and no node environment to
+    // consult, so values computed here silently fall back to their defaults.
   }
 
   options {
@@ -78,6 +72,23 @@ pipeline {
             // The gate compares against origin/main. A shallow clone does not have
             // it, and the failure surfaces as a confusing "no spec at origin/main".
             sh 'git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main || true'
+            script {
+              // Short SHA is the artifact identity: every deploy is traceable to
+              // one commit, and a rollback names an exact build rather than "the
+              // last one".
+              env.TAG = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()
+
+              // The -ai variant: `review` and `approve` need LangGraph. The
+              // verdict is the same as the plain image's; only the approval flow
+              // is added. API_GUARD_IMAGE / API_GUARD_PULL on the node let a local
+              // Jenkins use an image it built itself. Read through the shell,
+              // because that is where node environment variables are reliably
+              // visible.
+              env.GUARD_IMAGE = sh(script: 'echo "${API_GUARD_IMAGE:-sohanbhadalkar/api-guard:1-ai}"', returnStdout: true).trim()
+              env.GUARD_PULL = sh(script: 'echo "${API_GUARD_PULL:-true}"', returnStdout: true).trim()
+              env.APPROVAL_HOURS = sh(script: 'echo "${API_GUARD_APPROVAL_HOURS:-24}"', returnStdout: true).trim()
+              echo "api-guard image: ${env.GUARD_IMAGE} (pull: ${env.GUARD_PULL}), approval window: ${env.APPROVAL_HOURS}h"
+            }
           }
         }
 
