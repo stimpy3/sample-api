@@ -4,6 +4,7 @@ __pycache__/
 venv/
 .pytest_cache/
 api-guard-report/
+.api-guard/
 .env
 generated.yaml
 .schemathesis/
