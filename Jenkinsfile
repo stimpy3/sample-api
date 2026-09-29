@@ -68,7 +68,27 @@ pipeline {
 
         stage('Checkout') {
           steps {
-            checkout scm
+            script {
+              // The explicit checkout (skipDefaultCheckout above) does not put
+              // the GIT_* variables into env; its return value carries them.
+              def scmVars = checkout scm
+
+              // What the breaking check compares against. On a branch, the spec
+              // on main. On main itself, origin/main IS this commit, so the
+              // check would compare the spec with itself and never find
+              // anything; use the last commit that passed on this job instead
+              // (what is deployed), or the previous commit on a first build.
+              // Approved builds end UNSTABLE, not SUCCESS, so they are not used
+              // as the base: an approved break keeps being reported on main
+              // until its waiver is committed.
+              def branch = env.BRANCH_NAME ?: (scmVars.GIT_BRANCH ?: '')
+              if (branch == 'main' || branch.endsWith('/main')) {
+                env.GUARD_BASE = "git:${scmVars.GIT_PREVIOUS_SUCCESSFUL_COMMIT ?: 'HEAD~1'}"
+                echo "Building main: the breaking check compares against ${env.GUARD_BASE}"
+              } else {
+                env.GUARD_BASE = 'git:origin/main'
+              }
+            }
             // The gate compares against origin/main. A shallow clone does not have
             // it, and the failure surfaces as a confusing "no spec at origin/main".
             sh 'git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main || true'
@@ -146,6 +166,7 @@ pipeline {
                     review --config api-guard.yaml \
                            --generated-spec generated.yaml \
                            --url http://api:8000 \
+                           --base ${GUARD_BASE} \
                            --id ${BUILD_NUMBER}
                 """)
               }
