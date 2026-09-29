@@ -50,7 +50,7 @@ jobs:
           echo "::error::API did not come up"; exit 1
 
       - name: Contract gate
-        uses: stimpy3/api-guard@main
+        uses: stimpy3/ApiGuard@main
         with:
           config: api-guard.yaml
           generated-spec: generated.yaml
