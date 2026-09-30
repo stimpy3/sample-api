@@ -179,6 +179,9 @@ pipeline {
               } else if (code == 1 && fileExists('api-guard-report/approval-request.md')) {
                 env.GATE = 'awaiting-approval'
                 env.APPROVAL_QUESTION = readFile('api-guard-report/approval-request.md').trim()
+                // The saved review and the report live here; every decision
+                // in the Approval stage runs api-guard in this workspace.
+                env.GATE_WS = pwd()
               } else if (code == 1) {
                 error('api-guard: the contract would break consumers, and no review could be started to approve it.')
               } else {
@@ -212,36 +215,117 @@ pipeline {
       when { expression { env.GATE == 'awaiting-approval' } }
       // No agent. The build sits in the queue view as "waiting for input" and
       // its state is Jenkins' to keep; it survives a controller restart.
+      //
+      // One form, three choices, looping until a decision:
+      //   question → api-guard ask-review; the answer appears in the next form
+      //   approve  → api-guard approve; review.md gets the waiver to commit
+      //   reject   → api-guard reject; the build fails with a fix checklist
+      // Each choice borrows an executor only for the few seconds api-guard
+      // runs, in the gate's workspace, where the saved review lives.
       steps {
         script {
+          def hours = APPROVAL_HOURS as Integer
+          def decision = null
+          def note = ''
           try {
-            timeout(time: APPROVAL_HOURS as Integer, unit: 'HOURS') {
-              def answer = input(
-                id: 'ContractApproval',
-                message: "Breaking API change.\n\n${env.APPROVAL_QUESTION}",
-                ok: 'Approve and ship',
-                submitterParameter: 'SUBMITTER',
-                parameters: [
-                  string(
-                    name: 'APPROVED_BY',
-                    defaultValue: '',
-                    description: 'Your name, recorded in review.md. Required: an approval nobody signed is not an approval.'
-                  ),
-                ]
-              )
-              def name = (answer.APPROVED_BY ?: '').trim()
-              if (!name) {
-                error('Approval needs a name in APPROVED_BY. Nothing was shipped.')
+            timeout(time: hours, unit: 'HOURS') {
+              while (decision == null) {
+                def form = input(
+                  id: 'ContractReview',
+                  message: "Breaking API change.\n\n${note}${env.APPROVAL_QUESTION}",
+                  ok: 'Submit',
+                  submitterParameter: 'SUBMITTER',
+                  parameters: [
+                    choice(
+                      name: 'DECISION',
+                      choices: ['approve', 'reject', 'question'],
+                      description: 'approve: ship this build and get a waiver to commit. reject: fail it with a fix checklist. question: ask our agent first.'
+                    ),
+                    string(
+                      name: 'NAME',
+                      defaultValue: '',
+                      description: 'Your name. Required to approve or reject; recorded in review.md and in the waiver.'
+                    ),
+                    text(
+                      name: 'TEXT',
+                      defaultValue: '',
+                      description: 'approve/reject: the reason (at least 10 characters to approve; it becomes the waiver reason). question: what you want to know.'
+                    ),
+                    string(
+                      name: 'EXPIRES_IN',
+                      defaultValue: '30',
+                      description: 'approve only: days until the waiver expires (at most policy.max_waiver_days).'
+                    ),
+                  ]
+                )
+                def picked = form.DECISION
+                def name = (form.NAME ?: '').trim()
+                def body = (form.TEXT ?: '').trim()
+                note = ''
+                if (picked != 'question' && !name) {
+                  note = 'NAME is required to approve or reject.\n\n'
+                  continue
+                }
+                if (!body) {
+                  note = (picked == 'question' ? 'Type your question in TEXT.' : 'TEXT must hold the reason.') + '\n\n'
+                  continue
+                }
+
+                def status = 0
+                node {
+                  dir(env.GATE_WS) {
+                    // Form text reaches the shell only as environment
+                    // variables, never interpolated into the script.
+                    withEnv(["AG_BY=${name}", "AG_TEXT=${body}", "AG_DAYS=${(form.EXPIRES_IN ?: '30').trim()}"]) {
+                      if (picked == 'question') {
+                        status = _review('ask-review "$BUILD_NUMBER" "$AG_TEXT"')
+                      } else if (picked == 'approve') {
+                        status = _review('approve "$BUILD_NUMBER" --by "$AG_BY" --reason "$AG_TEXT" --expires-in "$AG_DAYS"')
+                      } else {
+                        status = _review('reject "$BUILD_NUMBER" --by "$AG_BY" --reason "$AG_TEXT"')
+                      }
+                    }
+                    if (status == 0 && picked == 'question') {
+                      env.APPROVAL_QUESTION = readFile('api-guard-report/approval-request.md').trim()
+                    }
+                    if (status == 0 && picked != 'question') {
+                      archiveArtifacts artifacts: 'api-guard-report/review.md'
+                      echo readFile('api-guard-report/review.md')
+                    }
+                  }
+                }
+                if (status != 0) {
+                  // api-guard refused the input (short reason, expiry out of
+                  // range, question limit). Ask again rather than fail.
+                  note = 'api-guard refused that (the reason is in the build log). Please try again.\n\n'
+                  continue
+                }
+                if (picked != 'question') {
+                  decision = picked
+                  env.DECIDED_BY = name
+                }
               }
-              env.APPROVED_BY = name
-              echo "Approved by ${name} (Jenkins user: ${answer.SUBMITTER})"
             }
-          } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException rejected) {
-            // Abort in the input dialog, or the timeout elapsing. Either way no
-            // human signed off, so this is a failed build, not an aborted one.
+          } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException stopped) {
+            // The Abort button, or the approval window running out. Nobody
+            // signed off, so the review is closed as rejected, and the build
+            // fails rather than showing as merely aborted.
+            node {
+              dir(env.GATE_WS) {
+                withEnv(["AG_TEXT=No decision within ${hours}h, or the build was aborted."]) {
+                  _review('reject "$BUILD_NUMBER" --by jenkins --reason "$AG_TEXT"')
+                }
+              }
+            }
             currentBuild.result = 'FAILURE'
-            error("Breaking change not approved (rejected, or no answer within ${APPROVAL_HOURS}h). Nothing was shipped.")
+            error("Breaking change not approved (aborted, or no decision within ${hours}h). Nothing was shipped.")
           }
+
+          if (decision == 'reject') {
+            currentBuild.result = 'FAILURE'
+            error("Breaking change rejected by ${env.DECIDED_BY}. Nothing was shipped; the fix checklist is in review.md.")
+          }
+          echo "Approved by ${env.DECIDED_BY}. Commit the waiver from review.md so the next build passes without approval."
         }
       }
     }
@@ -251,23 +335,6 @@ pipeline {
       options { timeout(time: 30, unit: 'MINUTES') }
 
       stages {
-
-        stage('Record approval') {
-          when { expression { env.GATE == 'awaiting-approval' } }
-          steps {
-            // The name reaches the shell as an environment variable, never
-            // interpolated into the script, since it is free text from a form.
-            withEnv(["APPROVER=${env.APPROVED_BY}"]) {
-              sh '''
-                docker run --rm -e APPROVER \
-                  --volumes-from "$JENKINS_CONTAINER" -w "$(pwd)" "$GUARD_IMAGE" \
-                  approve "$BUILD_NUMBER" --by "$APPROVER"
-              '''
-            }
-            archiveArtifacts artifacts: 'api-guard-report/review.md'
-            echo readFile('api-guard-report/review.md')
-          }
-        }
 
         // Everything below here only runs because the gate passed or a named
         // human approved the breaking change.
@@ -405,5 +472,22 @@ def _withOptionalGroqKey(Closure body) {
     }
   } catch (org.jenkinsci.plugins.credentialsbinding.impl.CredentialNotFoundException missing) {
     return body()
+  }
+}
+
+/**
+ * Runs one api-guard review command (ask-review, approve, reject) in the
+ * current directory with the guard image, and returns its exit code.
+ *
+ * `command` is a fixed shell fragment that refers to form input only through
+ * the AG_* environment variables set by the caller, so nothing a person types
+ * is ever interpolated into the script.
+ */
+int _review(String command) {
+  return _withOptionalGroqKey {
+    sh(returnStatus: true, script: """
+      docker run --rm -e GROQ_API_KEY -e AG_BY -e AG_TEXT -e AG_DAYS \
+        --volumes-from ${JENKINS_CONTAINER} -w \$(pwd) ${GUARD_IMAGE} ${command}
+    """)
   }
 }
